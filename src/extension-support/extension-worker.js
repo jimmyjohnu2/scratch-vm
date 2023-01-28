@@ -17,6 +17,7 @@ class ExtensionWorker {
                 this.workerId = id;
 
                 try {
+                    self.window = self;  //added per https://scratch.mit.edu/discuss/m/topic/277217/?page=7
                     importScripts(extension);
 
                     const initialRegistrations = this.initialRegistrations;
