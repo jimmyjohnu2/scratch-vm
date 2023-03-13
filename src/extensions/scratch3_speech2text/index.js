@@ -26,7 +26,7 @@ const menuIconURI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53M
  * The url of the speech server.
  * @type {string}
  */
-const serverURL = 'wss://speech.scratch.mit.edu';
+//const serverURL = 'wss://speech.scratch.mit.edu';
 
 /**
  * The amount of time to wait between when we stop sending speech data to the server and when
@@ -49,9 +49,10 @@ class Scratch3Speech2TextBlocks {
     constructor (runtime) {
         /**
          * The runtime instantiating this block package.
-         * @type {Runtime}
+         * @type {runtime}
          */
         this.runtime = runtime;
+        this._speechRecognitionErrors = 0;
 
         /**
          * An array of phrases from the [when I hear] hat blocks.
@@ -112,7 +113,7 @@ class Scratch3Speech2TextBlocks {
 
         /**
          * The ScriptProcessorNode hooked up to the audio context.
-         * @type {ScriptProcessorNode}
+         * @type {ScriptNode}
          * @private
          */
         this._scriptNode = null;
@@ -155,11 +156,11 @@ class Scratch3Speech2TextBlocks {
         // Threshold for diff match patch to use: (0.0 = perfection, 1.0 = very loose).
         this._dmp.Match_Threshold = 0.3;
 
-        this._newSocketCallback = this._newSocketCallback.bind(this);
-        this._setupSocketCallback = this._setupSocketCallback.bind(this);
-        this._socketMessageCallback = this._socketMessageCallback.bind(this);
-        this._processAudioCallback = this._processAudioCallback.bind(this);
-        this._onTranscriptionFromServer = this._onTranscriptionFromServer.bind(this);
+        //this._newSocketCallback = this._newSocketCallback.bind(this);
+        //this._setupSocketCallback = this._setupSocketCallback.bind(this);
+        //this._socketMessageCallback = this._socketMessageCallback.bind(this);
+        //this._processAudioCallback = this._processAudioCallback.bind(this);
+        //this._onTranscriptionFromServer = this._onTranscriptionFromServer.bind(this);
         this._resetListening = this._resetListening.bind(this);
         this._stopTranscription = this._stopTranscription.bind(this);
 
@@ -217,7 +218,7 @@ class Scratch3Speech2TextBlocks {
     _resetListening () {
         this.runtime.emitMicListening(false);
         this._stopListening();
-        this._closeWebsocket();
+        //this._closeWebsocket();
         this._resolveSpeechPromises();
     }
 
@@ -228,6 +229,7 @@ class Scratch3Speech2TextBlocks {
      */
     _resetEdgeTriggerUtterance () {
         this._utteranceForEdgeTrigger = '';
+        this._speechRecognitionErrors = 0;
     }
 
     /**
@@ -259,6 +261,7 @@ class Scratch3Speech2TextBlocks {
         if (this._sourceNode) {
             this._sourceNode.disconnect();
         }
+        this._stopBrowserSpeechRecognition();
     }
 
     /**
@@ -447,6 +450,7 @@ class Scratch3Speech2TextBlocks {
     _startListening () {
         this.runtime.emitMicListening(true);
         this._initListening();
+        this._startBrowserSpeechRecognition();
         // Force the block to timeout if we don't get any results back/the user didn't say anything.
         this._speechTimeoutId = setTimeout(this._stopTranscription, listenAndWaitBlockTimeoutMs);
     }
@@ -467,8 +471,8 @@ class Scratch3Speech2TextBlocks {
      */
     _initListening () {
         this._initializeMicrophone();
-        this._initScriptNode();
-        this._newWebsocket();
+        // this._initScriptNode();
+        // this._newWebsocket();
     }
 
     /**
@@ -476,126 +480,198 @@ class Scratch3Speech2TextBlocks {
      * @private
      */
     _initializeMicrophone () {
-        // Don't make a new context if we already made one.
-        if (!this._context) {
-            // Safari still needs a webkit prefix for audio context
-            this._context = new (window.AudioContext || window.webkitAudioContext)();
+        // // Don't make a new context if we already made one.
+        // if (!this._context) {
+        //     // Safari still needs a webkit prefix for audio context
+        //     this._context = new (window.AudioContext || window.webkitAudioContext)();
+        // }
+        // // In safari we have to call getUserMedia every time we want to listen. Other browsers allow
+        // // you to reuse the mediaStream.  See #1202 for more context.
+        // this._audioPromise = navigator.mediaDevices.getUserMedia({
+        //     audio: true
+        // });
+
+        // this._audioPromise.then().catch(e => {
+        //     log.error(`Problem connecting to microphone:  ${e}`);
+        // });
+        if(!this.SpeechRecognition) {
+            this.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || window.mozSpeechRecognition || window.msSpeechRecognition || window.osSpeechRecognition;
         }
-        // In safari we have to call getUserMedia every time we want to listen. Other browsers allow
-        // you to reuse the mediaStream.  See #1202 for more context.
-        this._audioPromise = navigator.mediaDevices.getUserMedia({
-            audio: true
-        });
-
-        this._audioPromise.then().catch(e => {
-            log.error(`Problem connecting to microphone:  ${e}`);
-        });
+        if(!this.AudioContext) {
+            this.AudioContext = window.AudioContext || window.webkitAudioContext;
+        }
+        if(!this.SpeechRecognition) {
+            //document.getElementById('scratch-speech2text-error').style.display='block';
+            console.log("_initializeMicrophone: failed to get Speech Regonition function");
+        }
     }
-
     /**
-     * Sets up the script processor and the web socket.
+     * Starts up the brower speech recognition function.
+     * @private
+     */
+    _startBrowserSpeechRecognition(){
+        if (!this.SpeechRecognition) {
+            console.log('No speech recognition support available');
+            // this._resetListening();
+            return;
+        }
+        this.browserRecognition = new this.SpeechRecognition();
+        this.browserRecognition.continuous = false;
+        this.browserRecognition.interimResults = false;
+        this.browserRecognition.maxAlternatives = 10;
+        this.browserRecognition.onresult = function (evt) {
+            // reset the count of failures
+            this._speechRecognitionErrors = 0;
+            var latest = evt.results[evt.results.length - 1];
+            var result = {
+                alternatives: [],
+                stability: latest[0].confidence,
+                isFinal: evt.results[0].isFinal
+            };
+            for (var i = 0; i < latest.length; i++) {
+                result.alternatives[i] = {
+                    transcript: latest[i].transcript
+                };
+            }
+            this._processTranscriptionResult(result);
+        }.bind(this);
+        this.browserRecognition.onerror = function (err) {
+            this._speechRecognitionErrors += 1;
+            console.log('Something went wrong', err);
+            this._resetListening();
+        }.bind(this);
+        this.browserRecognition.onnomatch = function () {
+            console.log('STT unrecognizable');
+        };
+        this.browserRecognition.onend = function () {
+            this._resetListening();
+        }.bind(this);
+        try {
+            this.browserRecognition.start();
+        } catch (err) {
+            console.log(err);
+        }
+
+    }
+       /**
+     * Stops speech recognition function in the brower
      * @private
      *
      */
-    _initScriptNode () {
-        // Create a node that sends raw bytes across the websocket
-        this._scriptNode = this._context.createScriptProcessor(4096, 1, 1);
-    }
-
-    /**
-     * Callback called when it is time to setup the new web socket.
-     * @param {Function} resolve - function to call when the web socket opens succesfully.
-     * @param {Function} reject - function to call if opening the web socket fails.
-     */
-    _newSocketCallback (resolve, reject) {
-        this._socket = new WebSocket(serverURL);
-        this._socket.addEventListener('open', resolve);
-        this._socket.addEventListener('error', reject);
-    }
-
-    /**
-     * Callback called once we've initially established the web socket is open and working.
-     * Sets up the callback for subsequent messages (i.e. transcription results)  and
-     * connects to the script node to get data.
-     * @private
-     */
-    _socketMessageCallback () {
-        this._socket.addEventListener('message', this._onTranscriptionFromServer);
-        this._startByteStream();
-    }
-
-    /**
-     * Sets up callback for when socket and audio are initialized.
-     * @private
-     */
-    _newWebsocket () {
-        const websocketPromise = new Promise(this._newSocketCallback);
-        Promise.all([this._audioPromise, websocketPromise]).then(
-            this._setupSocketCallback)
-            .catch(e => {
-                log.error(`Problem with setup:  ${e}`);
-            });
-    }
-
-    /**
-     * Callback to handle initial setting up of a socket.
-     * Currently we send a setup message (only contains sample rate) but might
-     * be useful to send more data so we can do quota stuff.
-     * @param {Array} values The
-     */
-    _setupSocketCallback (values) {
-        this._micStream = values[0];
-        this._socket = values[1].target;
-
-        this._socket.addEventListener('error', e => {
-            log.error(`Error from web socket: ${e}`);
-        });
-
-        // Send the initial configuration message. When the server acknowledges
-        // it, start streaming the audio bytes to the server and listening for
-        // transcriptions.
-        this._socket.addEventListener('message', this._socketMessageCallback, {once: true});
-        const langCode = this._getViewerLanguageCode();
-        this._socket.send(JSON.stringify(
-            {
-                sampleRate: this._context.sampleRate,
-                phrases: this._phraseList,
-                locale: langCode
+    _stopBrowserSpeechRecognition() {
+        if (this.browserRecognition) {
+            try {
+                this.browserRecognition.stop();
+            } catch (err) {
+                console.log(err);
             }
-        ));
-    }
-
-    /**
-     * Do setup so we can start streaming mic data.
-     * @private
-     */
-    _startByteStream () {
-        // Hook up the scriptNode to the mic
-        this._sourceNode = this._context.createMediaStreamSource(this._micStream);
-        this._sourceNode.connect(this._scriptNode);
-        this._scriptNode.addEventListener('audioprocess', this._processAudioCallback);
-        this._scriptNode.connect(this._context.destination);
-    }
-
-    /**
-     * Called when we have data from the microphone. Takes that data and ships
-     * it off to the speech server for transcription.
-     * @param {audioProcessingEvent} e The event with audio data in it.
-     * @private
-     */
-    _processAudioCallback (e) {
-        if (this._socket.readyState === WebSocket.CLOSED ||
-        this._socket.readyState === WebSocket.CLOSING) {
-            log.error(`Not sending data because not in ready state. State: ${this._socket.readyState}`);
-            // TODO: should we stop trying and reset state so it might work next time?
-            return;
         }
-        const MAX_INT = Math.pow(2, 16 - 1) - 1;
-        const floatSamples = e.inputBuffer.getChannelData(0);
-        // The samples are floats in range [-1, 1]. Convert to 16-bit signed
-        // integer.
-        this._socket.send(Int16Array.from(floatSamples.map(n => n * MAX_INT)));
     }
+
+    // /**
+    //  * Sets up the script processor and the web socket.
+    //  * @private
+    //  *
+    //  */
+    // _initScriptNode () {
+    //     // Create a node that sends raw bytes across the websocket
+    //     this._scriptNode = this._context.createScriptProcessor(4096, 1, 1);
+    // }
+
+    // /**
+    //  * Callback called when it is time to setup the new web socket.
+    //  * @param {Function} resolve - function to call when the web socket opens succesfully.
+    //  * @param {Function} reject - function to call if opening the web socket fails.
+    //  */
+    // _newSocketCallback (resolve, reject) {
+    //     this._socket = new WebSocket(serverURL);
+    //     this._socket.addEventListener('open', resolve);
+    //     this._socket.addEventListener('error', reject);
+    // }
+
+    // /**
+    //  * Callback called once we've initially established the web socket is open and working.
+    //  * Sets up the callback for subsequent messages (i.e. transcription results)  and
+    //  * connects to the script node to get data.
+    //  * @private
+    //  */
+    // _socketMessageCallback () {
+    //     this._socket.addEventListener('message', this._onTranscriptionFromServer);
+    //     this._startByteStream();
+    // }
+
+    // /**
+    //  * Sets up callback for when socket and audio are initialized.
+    //  * @private
+    //  */
+    // _newWebsocket () {
+    //     const websocketPromise = new Promise(this._newSocketCallback);
+    //     Promise.all([this._audioPromise, websocketPromise]).then(
+    //         this._setupSocketCallback)
+    //         .catch(e => {
+    //             log.error(`Problem with setup:  ${e}`);
+    //         });
+    // }
+
+    // /**
+    //  * Callback to handle initial setting up of a socket.
+    //  * Currently we send a setup message (only contains sample rate) but might
+    //  * be useful to send more data so we can do quota stuff.
+    //  * @param {Array} values The
+    //  */
+    // _setupSocketCallback (values) {
+    //     this._micStream = values[0];
+    //     this._socket = values[1].target;
+
+    //     this._socket.addEventListener('error', e => {
+    //         log.error(`Error from web socket: ${e}`);
+    //     });
+
+    //     // Send the initial configuration message. When the server acknowledges
+    //     // it, start streaming the audio bytes to the server and listening for
+    //     // transcriptions.
+    //     this._socket.addEventListener('message', this._socketMessageCallback, {once: true});
+    //     const langCode = this._getViewerLanguageCode();
+    //     this._socket.send(JSON.stringify(
+    //         {
+    //             sampleRate: this._context.sampleRate,
+    //             phrases: this._phraseList,
+    //             locale: langCode
+    //         }
+    //     ));
+    // }
+
+    // /**
+    //  * Do setup so we can start streaming mic data.
+    //  * @private
+    //  */
+    // _startByteStream () {
+    //     // Hook up the scriptNode to the mic
+    //     this._sourceNode = this._context.createMediaStreamSource(this._micStream);
+    //     this._sourceNode.connect(this._scriptNode);
+    //     this._scriptNode.addEventListener('audioprocess', this._processAudioCallback);
+    //     this._scriptNode.connect(this._context.destination);
+    // }
+
+    // /**
+    //  * Called when we have data from the microphone. Takes that data and ships
+    //  * it off to the speech server for transcription.
+    //  * @param {audioProcessingEvent} e The event with audio data in it.
+    //  * @private
+    //  */
+    // _processAudioCallback (e) {
+    //     if (this._socket.readyState === WebSocket.CLOSED ||
+    //     this._socket.readyState === WebSocket.CLOSING) {
+    //         log.error(`Not sending data because not in ready state. State: ${this._socket.readyState}`);
+    //         // TODO: should we stop trying and reset state so it might work next time?
+    //         return;
+    //     }
+    //     const MAX_INT = Math.pow(2, 16 - 1) - 1;
+    //     const floatSamples = e.inputBuffer.getChannelData(0);
+    //     // The samples are floats in range [-1, 1]. Convert to 16-bit signed
+    //     // integer.
+    //     this._socket.send(Int16Array.from(floatSamples.map(n => n * MAX_INT)));
+    // }
 
     /**
      * The key to load & store a target's speech-related state.
@@ -657,6 +733,15 @@ class Scratch3Speech2TextBlocks {
                         description: 'Get the text of spoken words transcribed by the speech recognition system.'
                     }),
                     blockType: BlockType.REPORTER
+                },
+                {
+                    opcode: 'clearSpeech',
+                    text: formatMessage({
+                        id: 'speech.clearSpeechCmd',
+                        default: 'clear speech',
+                        description: 'clear last speech/utterance.'
+                    }),
+                    blockType: BlockType.COMMAND
                 }
             ]
         };
@@ -667,14 +752,18 @@ class Scratch3Speech2TextBlocks {
      * @return {Promise} A promise that will resolve when listening is complete.
      */
     listenAndWait () {
+        const _this = this;
+        if (this._speechRecognitionErrors > 0) {
+            return;
+        }
         this._phraseList = this._scanBlocksForPhraseList();
         this._resetEdgeTriggerUtterance();
 
         const speechPromise = new Promise(resolve => {
-            const listeningInProgress = this._speechPromises.length > 0;
-            this._speechPromises.push(resolve);
+            const listeningInProgress = _this._speechPromises.length > 0;
+            _this._speechPromises.push(resolve);
             if (!listeningInProgress) {
-                this._startListening();
+                _this._startListening();
             }
         });
         return speechPromise;
@@ -696,5 +785,14 @@ class Scratch3Speech2TextBlocks {
     getSpeech () {
         return this._currentUtterance;
     }
+    /**
+     * Command for clearing the last heard phrase/utterance
+     * and, restting the lisening mode.
+     */
+    clearSpeech () {
+        this._currentUtterance = '';
+        this._speechRecognitionErrors = 0;
+        this._resetListening();
+    }    
 }
 module.exports = Scratch3Speech2TextBlocks;

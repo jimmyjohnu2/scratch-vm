@@ -20,3 +20,6 @@ npm-*
 
 # Localization
 /translations
+
+# environment variables
+.env

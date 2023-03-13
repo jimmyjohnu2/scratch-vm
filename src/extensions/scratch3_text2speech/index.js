@@ -719,7 +719,8 @@ class Scratch3Text2SpeechBlocks {
         let path = `${SERVER_HOST}/synth`;
         path += `?locale=${locale}`;
         path += `&gender=${gender}`;
-        path += `&text=${encodeURIComponent(words.substring(0, 128))}`;
+        path += `&text=${encodeURIComponent(words.substring(0, 256))}`;
+        // path += `&text=${encodeURIComponent(words.substring(0, 128))}`;
 
         // Perform HTTP request to get audio file
         return fetchWithTimeout(path, {}, SERVER_TIMEOUT)
@@ -760,6 +761,7 @@ class Scratch3Text2SpeechBlocks {
             })
             .catch(err => {
                 log.warn(err);
+                window.alert(err);
             });
     }
 }

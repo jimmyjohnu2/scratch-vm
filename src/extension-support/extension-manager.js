@@ -18,6 +18,8 @@ const builtinExtensions = {
     music: () => require('../extensions/scratch3_music'),
     microbit: () => require('../extensions/scratch3_microbit'),
     text2speech: () => require('../extensions/scratch3_text2speech'),
+    speech2text: () => require('../extensions/scratch3_speech2text'),
+    chatBot: () => require('../extensions/scratch3_chatBot'),
     translate: () => require('../extensions/scratch3_translate'),
     videoSensing: () => require('../extensions/scratch3_video_sensing'),
     ev3: () => require('../extensions/scratch3_ev3'),
@@ -90,7 +92,7 @@ class ExtensionManager {
         /**
          * Keep a reference to the runtime so we can construct internal extension objects.
          * TODO: remove this in favor of extensions accessing the runtime as a service.
-         * @type {Runtime}
+         * @type {runtime}
          */
         this.runtime = runtime;
 
